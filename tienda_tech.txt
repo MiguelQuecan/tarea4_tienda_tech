@@ -1,0 +1,239 @@
+
+use("tienda_tech");
+
+
+// CREACIÓN Y CARGA DE DATOS
+
+db.clientes.drop();
+db.productos.drop();
+db.pedidos.drop();
+
+
+let semilla = 2026;
+function rnd() { semilla = (semilla * 16807) % 2147483647; return semilla / 2147483647; }
+function entre(a, b) { return Math.floor(rnd() * (b - a + 1)) + a; }
+function elegir(arr) { return arr[entre(0, arr.length - 1)]; }
+
+// --- Colección: clientes (30 documentos) ---
+const nombres = ["Laura", "Carlos", "Andrea", "Julián", "Camila", "Santiago", "Valentina", "Mateo", "Daniela", "Sebastián"];
+const apellidos = ["Gómez", "Rodríguez", "Martínez", "López", "Pérez", "Ramírez", "Torres", "Díaz"];
+const ciudades = ["Bogotá", "Medellín", "Cali", "Barranquilla", "Armenia", "Bucaramanga"];
+
+let clientes = [];
+for (let i = 1; i <= 30; i++) {
+  const n = elegir(nombres), a = elegir(apellidos);
+  clientes.push({
+    _id: "CLI" + String(i).padStart(3, "0"),
+    nombre: n + " " + a,
+    correo: (n + "." + a + i + "@correo.com").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""),
+    ciudad: elegir(ciudades),
+    fecha_registro: new Date(2025, entre(0, 11), entre(1, 28)),
+    activo: rnd() > 0.1
+  });
+}
+db.clientes.insertMany(clientes);
+
+// --- Colección: productos (40 documentos) ---
+const catalogo = [
+  { categoria: "Portátiles",  marca: ["Lenovo", "HP", "Asus", "Dell"],        base: 2200000, esp: () => ({ ram_gb: elegir([8, 16, 32]), almacenamiento_gb: elegir([256, 512, 1024]) }) },
+  { categoria: "Celulares",   marca: ["Samsung", "Xiaomi", "Motorola"],       base: 900000,  esp: () => ({ ram_gb: elegir([4, 6, 8]),  almacenamiento_gb: elegir([128, 256]) }) },
+  { categoria: "Periféricos", marca: ["Logitech", "Redragon", "HyperX"],      base: 120000,  esp: () => ({ conexion: elegir(["USB", "Bluetooth", "Inalámbrico 2.4G"]) }) },
+  { categoria: "Monitores",   marca: ["LG", "Samsung", "AOC"],                base: 700000,  esp: () => ({ pulgadas: elegir([22, 24, 27, 32]), resolucion: elegir(["FHD", "QHD", "4K"]) }) }
+];
+let productos = [];
+for (let i = 1; i <= 40; i++) {
+  const c = elegir(catalogo);
+  const marca = elegir(c.marca);
+  productos.push({
+    _id: "SKU" + String(i).padStart(3, "0"),
+    nombre: c.categoria.slice(0, -1) + " " + marca + " Modelo " + entre(100, 999),
+    categoria: c.categoria,
+    marca: marca,
+    precio: Math.round((c.base * (0.8 + rnd() * 0.9)) / 1000) * 1000,
+    stock: entre(0, 60),
+    etiquetas: [c.categoria.toLowerCase(), marca.toLowerCase(), elegir(["oferta", "nuevo", "popular"])],
+    especificaciones: c.esp()
+  });
+}
+db.productos.insertMany(productos);
+
+// --- Colección: pedidos (120 documentos, con productos embebidos) ---
+const estados = ["pendiente", "enviado", "entregado", "cancelado"];
+const pagos = ["tarjeta", "PSE", "contraentrega", "nequi"];
+let pedidos = [];
+for (let i = 1; i <= 120; i++) {
+  const nItems = entre(1, 3);
+  let items = [], total = 0;
+  for (let k = 0; k < nItems; k++) {
+    const p = elegir(productos);
+    const cant = entre(1, 3);
+    items.push({ sku: p._id, nombre: p.nombre, cantidad: cant, precio_unitario: p.precio });
+    total += cant * p.precio;
+  }
+  pedidos.push({
+    _id: "PED" + String(i).padStart(4, "0"),
+    cliente_id: elegir(clientes)._id,
+    fecha: new Date(2026, entre(0, 9), entre(1, 28)),
+    estado: elegir(estados),
+    metodo_pago: elegir(pagos),
+    items: items,
+    total: total
+  });
+}
+db.pedidos.insertMany(pedidos);
+
+print("Clientes:  " + db.clientes.countDocuments());
+print("Productos: " + db.productos.countDocuments());
+print("Pedidos:   " + db.pedidos.countDocuments());
+
+// Índices para las consultas
+db.pedidos.createIndex({ cliente_id: 1 });
+db.pedidos.createIndex({ estado: 1, fecha: -1 });
+db.productos.createIndex({ categoria: 1, precio: 1 });
+
+
+// CONSULTAS 
+
+
+// INSERCIÓN 
+
+db.clientes.insertOne({
+  _id: "CLI999", nombre: "Miguel (prueba)", correo: "prueba@correo.com",
+  ciudad: "Armenia", fecha_registro: new Date(), activo: true
+});
+
+db.productos.insertMany([
+  { _id: "SKU901", nombre: "Audífonos Prueba A", categoria: "Periféricos", marca: "HyperX", precio: 150000, stock: 10, etiquetas: ["periféricos"], especificaciones: { conexion: "USB" } },
+  { _id: "SKU902", nombre: "Audífonos Prueba B", categoria: "Periféricos", marca: "Logitech", precio: 90000, stock: 0, etiquetas: ["periféricos"], especificaciones: { conexion: "Bluetooth" } }
+]);
+
+// SELECCIÓN 
+
+printjson(db.clientes.findOne({ _id: "CLI999" }));
+printjson(db.productos.find({ categoria: "Portátiles" }, { nombre: 1, precio: 1, _id: 0 }).limit(5).toArray());
+
+// ACTUALIZACIÓN 
+
+db.clientes.updateOne({ _id: "CLI999" }, { $set: { ciudad: "Bogotá" } });
+db.productos.updateMany({ categoria: "Periféricos", stock: 0 }, { $set: { stock: 25 } });
+db.productos.updateOne({ _id: "SKU901" }, { $inc: { stock: -1 }, $push: { etiquetas: "oferta" } });
+printjson(db.productos.findOne({ _id: "SKU901" }));
+
+//  ELIMINACIÓN 
+
+db.clientes.deleteOne({ _id: "CLI999" });
+db.productos.deleteMany({ _id: { $in: ["SKU901", "SKU902"] } });
+
+
+// FILTROS Y OPERADORES
+
+
+// Comparación + proyección + orden
+
+printjson(db.productos.find(
+  { precio: { $gte: 1000000, $lte: 3000000 } },
+  { nombre: 1, precio: 1, _id: 0 }
+).sort({ precio: -1 }).limit(5).toArray());
+
+// Lógicos: $and / $or / $in
+
+printjson(db.productos.find({
+  $and: [
+    { categoria: { $in: ["Portátiles", "Monitores"] } },
+    { $or: [{ stock: { $lt: 10 } }, { etiquetas: "oferta" }] }
+  ]
+}, { nombre: 1, stock: 1, categoria: 1, _id: 0 }).toArray());
+
+// Campo anidado y regex
+
+printjson(db.productos.find({ "especificaciones.ram_gb": { $gte: 16 } }, { nombre: 1, "especificaciones.ram_gb": 1, _id: 0 }).toArray());
+printjson(db.clientes.find({ nombre: { $regex: /^Ca/ } }, { nombre: 1, ciudad: 1, _id: 0 }).toArray());
+
+// Arreglos: $elemMatch (pedidos con algún ítem de 2 o más unidades de más de 1.000.000)
+
+printjson(db.pedidos.find({
+  items: { $elemMatch: { cantidad: { $gte: 2 }, precio_unitario: { $gt: 1000000 } } }
+}, { total: 1, estado: 1 }).limit(5).toArray());
+
+
+// "JOIN" CON $lookup
+
+
+// Pedidos entregados con los datos del cliente
+
+printjson(db.pedidos.aggregate([
+  { $match: { estado: "entregado" } },
+  { $lookup: { from: "clientes", localField: "cliente_id", foreignField: "_id", as: "cliente" } },
+  { $unwind: "$cliente" },
+  { $project: { _id: 1, total: 1, fecha: 1, "cliente.nombre": 1, "cliente.ciudad": 1 } },
+  { $limit: 5 }
+]).toArray());
+
+// Detalle de cada ítem del pedido con el catálogo de productos
+
+printjson(db.pedidos.aggregate([
+  { $unwind: "$items" },
+  { $lookup: { from: "productos", localField: "items.sku", foreignField: "_id", as: "producto" } },
+  { $unwind: "$producto" },
+  { $project: { _id: 1, "items.cantidad": 1, "producto.categoria": 1, "producto.marca": 1 } },
+  { $limit: 5 }
+]).toArray());
+
+
+// CONSULTAS DE AGREGACIÓN
+
+
+// Contar
+print("Total de pedidos: " + db.pedidos.countDocuments());
+printjson(db.pedidos.aggregate([
+  { $group: { _id: "$estado", cantidad: { $sum: 1 } } },
+  { $sort: { cantidad: -1 } }
+]).toArray());
+
+// Sumar: ventas totales de pedidos no cancelados
+
+printjson(db.pedidos.aggregate([
+  { $match: { estado: { $ne: "cancelado" } } },
+  { $group: { _id: null, ventas_totales: { $sum: "$total" } } }
+]).toArray());
+
+// Promediar: ticket promedio por método de pago
+
+printjson(db.pedidos.aggregate([
+  { $group: { _id: "$metodo_pago", ticket_promedio: { $avg: "$total" }, pedidos: { $sum: 1 } } },
+  { $sort: { ticket_promedio: -1 } }
+]).toArray());
+
+// Mín / Máx / Promedio de precio por categoría
+
+printjson(db.productos.aggregate([
+  { $group: { _id: "$categoria", minimo: { $min: "$precio" }, maximo: { $max: "$precio" }, promedio: { $avg: "$precio" }, referencias: { $sum: 1 } } }
+]).toArray());
+
+// Top 5 productos más vendidos por unidades
+
+printjson(db.pedidos.aggregate([
+  { $match: { estado: { $ne: "cancelado" } } },
+  { $unwind: "$items" },
+  { $group: { _id: "$items.sku", nombre: { $first: "$items.nombre" }, unidades: { $sum: "$items.cantidad" } } },
+  { $sort: { unidades: -1 } },
+  { $limit: 5 }
+]).toArray());
+
+// Ventas por ciudad del cliente (agregación + $lookup)
+
+printjson(db.pedidos.aggregate([
+  { $match: { estado: "entregado" } },
+  { $lookup: { from: "clientes", localField: "cliente_id", foreignField: "_id", as: "c" } },
+  { $unwind: "$c" },
+  { $group: { _id: "$c.ciudad", ventas: { $sum: "$total" }, pedidos: { $sum: 1 } } },
+  { $sort: { ventas: -1 } }
+]).toArray());
+
+// Ventas por mes
+
+printjson(db.pedidos.aggregate([
+  { $match: { estado: { $ne: "cancelado" } } },
+  { $group: { _id: { $month: "$fecha" }, ventas: { $sum: "$total" } } },
+  { $sort: { _id: 1 } }
+]).toArray());
